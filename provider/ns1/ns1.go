@@ -183,7 +183,7 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 				)
 
 				if len(r.Answers) > 0 && r.Answers[0].Meta != nil && r.Answers[0].Meta.Weight != nil {
-					w := fmt.Sprintf("%s", r.Answers[0].Meta.Weight)
+					w := fmt.Sprintf("%v", r.Answers[0].Meta.Weight)
 					ep.WithProviderSpecific("weight", w)
 				}
 
