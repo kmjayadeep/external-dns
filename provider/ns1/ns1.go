@@ -47,6 +47,7 @@ const (
 // NS1DomainClient is a subset of the NS1 API the the provider uses, to ease testing
 type NS1DomainClient interface {
 	CreateRecord(r *dns.Record) (*http.Response, error)
+	GetRecord(zone string, domain string, t string) (*dns.Record, *http.Response, error)
 	DeleteRecord(zone string, domain string, t string) (*http.Response, error)
 	UpdateRecord(r *dns.Record) (*http.Response, error)
 	GetZone(zone string) (*dns.Zone, *http.Response, error)
@@ -61,6 +62,11 @@ type NS1DomainService struct {
 // CreateRecord wraps the Create method of the API's Record service
 func (n NS1DomainService) CreateRecord(r *dns.Record) (*http.Response, error) {
 	return n.service.Records.Create(r)
+}
+
+// GetRecord wraps the Get method of the API's Record service
+func (n NS1DomainService) GetRecord(zone string, domain string, t string) (*dns.Record, *http.Response, error) {
+	return n.service.Records.Get(zone, domain, t)
 }
 
 // DeleteRecord wraps the Delete method of the API's Record service
@@ -163,16 +169,30 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 
 		for _, record := range zoneData.Records {
 			if provider.SupportedRecordType(record.Type) {
-				endpoints = append(endpoints, endpoint.NewEndpointWithTTL(
+
+				r, _, err := p.client.GetRecord(zone.Zone, record.Domain, record.Type)
+				if err != nil {
+					return nil, err
+				}
+
+				ep := endpoint.NewEndpointWithTTL(
 					record.Domain,
 					record.Type,
 					endpoint.TTL(record.TTL),
 					record.ShortAns...,
-				),
 				)
+
+				if len(r.Answers) > 0 && r.Answers[0].Meta != nil && r.Answers[0].Meta.Weight != nil {
+					w := fmt.Sprintf("%s", r.Answers[0].Meta.Weight)
+					ep.WithProviderSpecific("weight", w)
+				}
+
+				endpoints = append(endpoints, ep)
 			}
 		}
 	}
+
+	log.Info(endpoints)
 
 	return endpoints, nil
 }
@@ -181,7 +201,12 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 func (p *NS1Provider) ns1BuildRecord(zoneName string, change *ns1Change) *dns.Record {
 	record := dns.NewRecord(zoneName, change.Endpoint.DNSName, change.Endpoint.RecordType)
 	for _, v := range change.Endpoint.Targets {
-		record.AddAnswer(dns.NewAnswer(strings.Split(v, " ")))
+		a := dns.NewAnswer(strings.Split(v, " "))
+		w, exists := change.Endpoint.GetProviderSpecificProperty("weight")
+		if exists {
+			a.Meta.Weight = w.Value
+		}
+		record.AddAnswer(a)
 	}
 	// set default ttl, but respect minTTLSeconds
 	var ttl = ns1DefaultTTL
