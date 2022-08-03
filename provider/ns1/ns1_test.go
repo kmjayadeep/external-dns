@@ -38,6 +38,10 @@ type MockNS1DomainClient struct {
 	mock.Mock
 }
 
+func (m *MockNS1DomainClient) GetRecord(zone string, domain string, t string) (*dns.Record, *http.Response, error) {
+	return nil, nil, nil
+}
+
 func (m *MockNS1DomainClient) CreateRecord(r *dns.Record) (*http.Response, error) {
 	return nil, nil
 }
@@ -81,6 +85,10 @@ func (m *MockNS1DomainClient) ListZones() ([]*dns.Zone, *http.Response, error) {
 
 type MockNS1GetZoneFail struct{}
 
+func (m *MockNS1GetZoneFail) GetRecord(zone string, domain string, t string) (*dns.Record, *http.Response, error) {
+	return nil, nil, nil
+}
+
 func (m *MockNS1GetZoneFail) CreateRecord(r *dns.Record) (*http.Response, error) {
 	return nil, nil
 }
@@ -106,6 +114,10 @@ func (m *MockNS1GetZoneFail) ListZones() ([]*dns.Zone, *http.Response, error) {
 }
 
 type MockNS1ListZonesFail struct{}
+
+func (m *MockNS1ListZonesFail) GetRecord(zone string, domain string, t string) (*dns.Record, *http.Response, error) {
+	return nil, nil, nil
+}
 
 func (m *MockNS1ListZonesFail) CreateRecord(r *dns.Record) (*http.Response, error) {
 	return nil, nil
