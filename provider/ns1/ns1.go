@@ -241,6 +241,46 @@ func (p *NS1Provider) ns1BuildRecord(zoneName string, change *ns1Change) *dns.Re
 	return record
 }
 
+func (p *NS1Provider) reconcileRecordChanges(record *dns.Record, action string) (*dns.Record, string) {
+	r, _, err := p.client.GetRecord(record.Zone, record.Domain, record.Type)
+
+	switch action {
+	case ns1Create:
+		if err == api.ErrRecordMissing {
+			return record, ns1Create
+		}
+		for _, a := range r.Answers {
+			n := fmt.Sprintf("%s", a.Meta.Note)
+			if n != ownerNote(p.OwnerID) {
+				record.Answers = append(record.Answers, a)
+			}
+		}
+		return record, ns1Update
+	case ns1Update:
+		for _, a := range r.Answers {
+			n := fmt.Sprintf("%s", a.Meta.Note)
+			if n != ownerNote(p.OwnerID) {
+				record.Answers = append(record.Answers, a)
+			}
+		}
+		return record, ns1Update
+	case ns1Delete:
+		if len(record.Answers) == len(r.Answers) {
+			return record, ns1Delete
+		}
+
+		record.Answers = []*dns.Answer{}
+		for _, a := range r.Answers {
+			n := fmt.Sprintf("%s", a.Meta.Note)
+			if n != ownerNote(p.OwnerID) {
+				record.Answers = append(record.Answers, a)
+			}
+		}
+	}
+
+	return record, action
+}
+
 // ns1SubmitChanges takes an array of changes and sends them to NS1
 func (p *NS1Provider) ns1SubmitChanges(changes []*ns1Change) error {
 	// return early if there is nothing to change
@@ -253,26 +293,44 @@ func (p *NS1Provider) ns1SubmitChanges(changes []*ns1Change) error {
 		return err
 	}
 
+	// recordsPerZone := make(map[string]*dns.Zone)
+	// for _, zone := range zones {
+	// recordsPerZone[zone.Zone] = zone
+	// }
+
 	// separate into per-zone change sets to be passed to the API.
 	changesByZone := ns1ChangesByZone(zones, changes)
 	for zoneName, changes := range changesByZone {
 		for _, change := range changes {
 			record := p.ns1BuildRecord(zoneName, change)
 			logFields := log.Fields{
-				"record": record.Domain,
-				"type":   record.Type,
-				"ttl":    record.TTL,
-				"action": change.Action,
-				"zone":   zoneName,
+				"record":  record.Domain,
+				"type":    record.Type,
+				"ttl":     record.TTL,
+				"action":  change.Action,
+				"zone":    zoneName,
+				"Answers": record.Answers,
 			}
 
 			log.WithFields(logFields).Info("Changing record.")
+
+			record, action := p.reconcileRecordChanges(record, change.Action)
+
+			logFields = log.Fields{
+				"record":  record.Domain,
+				"type":    record.Type,
+				"ttl":     record.TTL,
+				"action":  change.Action,
+				"zone":    zoneName,
+				"Answers": record.Answers,
+			}
+			log.WithFields(logFields).Info("Changing record after recocnile.")
 
 			if p.dryRun {
 				continue
 			}
 
-			switch change.Action {
+			switch action {
 			case ns1Create:
 				_, err := p.client.CreateRecord(record)
 				if err != nil {
