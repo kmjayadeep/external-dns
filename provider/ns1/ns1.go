@@ -97,6 +97,7 @@ type NS1Config struct {
 	NS1IgnoreSSL  bool
 	DryRun        bool
 	MinTTLSeconds int
+	OwnerID       string
 }
 
 // NS1Provider is the NS1 provider
@@ -107,6 +108,7 @@ type NS1Provider struct {
 	zoneIDFilter  provider.ZoneIDFilter
 	dryRun        bool
 	minTTLSeconds int
+	OwnerID       string
 }
 
 // NewNS1Provider creates a new NS1 Provider
@@ -147,6 +149,7 @@ func newNS1ProviderWithHTTPClient(config NS1Config, client *http.Client) (*NS1Pr
 		domainFilter:  config.DomainFilter,
 		zoneIDFilter:  config.ZoneIDFilter,
 		minTTLSeconds: config.MinTTLSeconds,
+		OwnerID:       config.OwnerID,
 	}
 	return provider, nil
 }
@@ -175,11 +178,27 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 					return nil, err
 				}
 
+				var targets []string
+
+				for i, e := range r.Answers {
+					n := fmt.Sprintf("%s", e.Meta.Note)
+					if n == ownerNote(p.OwnerID) {
+						targets = append(targets, record.ShortAns[i])
+					}
+				}
+
+				// Assume that the record doesnt exist if the target list is empty
+				// Otherwise registry will throw out of bonds error
+				if len(targets) == 0 {
+					continue
+				}
+
 				ep := endpoint.NewEndpointWithTTL(
 					record.Domain,
 					record.Type,
 					endpoint.TTL(record.TTL),
-					record.ShortAns...,
+					// record.ShortAns...,
+					targets...,
 				)
 
 				if len(r.Answers) > 0 && r.Answers[0].Meta != nil && r.Answers[0].Meta.Weight != nil {
@@ -203,9 +222,10 @@ func (p *NS1Provider) ns1BuildRecord(zoneName string, change *ns1Change) *dns.Re
 	for _, v := range change.Endpoint.Targets {
 		a := dns.NewAnswer(strings.Split(v, " "))
 		w, exists := change.Endpoint.GetProviderSpecificProperty("weight")
-		if exists {
+		if exists && record.Type == "A" {
 			a.Meta.Weight = w.Value
 		}
+		a.Meta.Note = ownerNote(p.OwnerID)
 		record.AddAnswer(a)
 	}
 	// set default ttl, but respect minTTLSeconds
@@ -347,4 +367,9 @@ func ns1ChangesByZone(zones []*dns.Zone, changeSets []*ns1Change) map[string][]*
 	}
 
 	return changes
+}
+
+// ownerNote returns the string representation of owner information to be added as a note to the record
+func ownerNote(ownerId string) string {
+	return fmt.Sprintf("ownerId:%s", ownerId)
 }
