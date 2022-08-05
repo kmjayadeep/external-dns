@@ -173,6 +173,8 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 		for _, record := range zoneData.Records {
 			if provider.SupportedRecordType(record.Type) {
 
+				// Fetch the complete record object from NS1
+				// This is required to get weight and note metadata
 				r, _, err := p.client.GetRecord(zone.Zone, record.Domain, record.Type)
 				if err != nil {
 					return nil, err
@@ -180,15 +182,15 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 
 				var targets []string
 
+				// Discard the answers which are not owned by this OwnerID
 				for i, e := range r.Answers {
-					n := fmt.Sprintf("%s", e.Meta.Note)
-					if n == ownerNote(p.OwnerID) {
+					if checkOwnerNote(p.OwnerID, e.Meta.Note) {
 						targets = append(targets, record.ShortAns[i])
 					}
 				}
 
 				// Assume that the record doesnt exist if the target list is empty
-				// Otherwise registry will throw out of bonds error
+				// Otherwise registry will throw out of bonds error when TXT record is empty
 				if len(targets) == 0 {
 					continue
 				}
@@ -197,10 +199,10 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 					record.Domain,
 					record.Type,
 					endpoint.TTL(record.TTL),
-					// record.ShortAns...,
 					targets...,
 				)
 
+				// If weight meta is available, add it to endpoint
 				if len(r.Answers) > 0 && r.Answers[0].Meta != nil && r.Answers[0].Meta.Weight != nil {
 					w := fmt.Sprintf("%v", r.Answers[0].Meta.Weight)
 					ep.WithProviderSpecific("weight", w)
@@ -221,6 +223,7 @@ func (p *NS1Provider) ns1BuildRecord(zoneName string, change *ns1Change) *dns.Re
 	record := dns.NewRecord(zoneName, change.Endpoint.DNSName, change.Endpoint.RecordType)
 	for _, v := range change.Endpoint.Targets {
 		a := dns.NewAnswer(strings.Split(v, " "))
+		// Add weight and ownerId meta for the endpoint
 		w, exists := change.Endpoint.GetProviderSpecificProperty("weight")
 		if exists && record.Type == "A" {
 			a.Meta.Weight = w.Value
@@ -246,33 +249,36 @@ func (p *NS1Provider) reconcileRecordChanges(record *dns.Record, action string) 
 
 	switch action {
 	case ns1Create:
+		// If the record itself doesn't exist, trigger a create action
 		if err == api.ErrRecordMissing {
 			return record, ns1Create
 		}
+		// If the record already exists at ns1 and external-dns triggers a create action,
+		// it means that all the answers in the record are owned by other instances
+		// add the new answers to the list and trigger an update action
 		for _, a := range r.Answers {
-			n := fmt.Sprintf("%s", a.Meta.Note)
-			if n != ownerNote(p.OwnerID) {
-				record.Answers = append(record.Answers, a)
-			}
+			record.Answers = append(record.Answers, a)
 		}
 		return record, ns1Update
 	case ns1Update:
+		// Copy over the answers from other instances to the record before triggering the update
+		// Thus we can ensure that we will only modify the answers specific to this instance
 		for _, a := range r.Answers {
-			n := fmt.Sprintf("%s", a.Meta.Note)
-			if n != ownerNote(p.OwnerID) {
+			if !checkOwnerNote(p.OwnerID, a.Meta.Note) {
 				record.Answers = append(record.Answers, a)
 			}
 		}
 		return record, ns1Update
 	case ns1Delete:
 		if len(record.Answers) == len(r.Answers) {
+			// All the answers are owned by this instance. Just delete the whole record
 			return record, ns1Delete
 		}
 
+		// Trigger an update by removing answers corresponding to this instance
 		record.Answers = []*dns.Answer{}
 		for _, a := range r.Answers {
-			n := fmt.Sprintf("%s", a.Meta.Note)
-			if n != ownerNote(p.OwnerID) {
+			if !checkOwnerNote(p.OwnerID, a.Meta.Note) {
 				record.Answers = append(record.Answers, a)
 			}
 		}
@@ -293,11 +299,6 @@ func (p *NS1Provider) ns1SubmitChanges(changes []*ns1Change) error {
 		return err
 	}
 
-	// recordsPerZone := make(map[string]*dns.Zone)
-	// for _, zone := range zones {
-	// recordsPerZone[zone.Zone] = zone
-	// }
-
 	// separate into per-zone change sets to be passed to the API.
 	changesByZone := ns1ChangesByZone(zones, changes)
 	for zoneName, changes := range changesByZone {
@@ -312,8 +313,12 @@ func (p *NS1Provider) ns1SubmitChanges(changes []*ns1Change) error {
 				"Answers": record.Answers,
 			}
 
-			log.WithFields(logFields).Info("Changing record.")
+			log.WithFields(logFields).Info("record changes as per external-dns registry")
 
+			// external-dns triggers an action base on it's 'view' of the answers
+			// but in reality, there might be other answers which are owned by different external-dns instances
+			// So we need to update the records properly while making sure that we are not changing records owned by
+			// other instances
 			record, action := p.reconcileRecordChanges(record, change.Action)
 
 			logFields = log.Fields{
@@ -324,7 +329,7 @@ func (p *NS1Provider) ns1SubmitChanges(changes []*ns1Change) error {
 				"zone":    zoneName,
 				"Answers": record.Answers,
 			}
-			log.WithFields(logFields).Info("Changing record after recocnile.")
+			log.WithFields(logFields).Info("record changes after reconcile")
 
 			if p.dryRun {
 				continue
@@ -430,4 +435,10 @@ func ns1ChangesByZone(zones []*dns.Zone, changeSets []*ns1Change) map[string][]*
 // ownerNote returns the string representation of owner information to be added as a note to the record
 func ownerNote(ownerId string) string {
 	return fmt.Sprintf("ownerId:%s", ownerId)
+}
+
+// check if the owner specified in the note is matching the current instance
+func checkOwnerNote(ownerID string, metaNote interface{}) bool {
+	n := fmt.Sprintf("%s", metaNote)
+	return n == ownerNote(ownerID)
 }
