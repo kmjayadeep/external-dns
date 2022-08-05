@@ -39,9 +39,9 @@ type MockNS1DomainClient struct {
 }
 
 func (m *MockNS1DomainClient) GetRecord(zone string, domain string, t string) (*dns.Record, *http.Response, error) {
-  args := m.Called(zone, domain, t)
-  r1 := args.Get(0).(*dns.Record)
-  r2 := args.Get(0).(*http.Response)
+	args := m.Called(zone, domain, t)
+	r1 := args.Get(0).(*dns.Record)
+	r2 := args.Get(1).(*http.Response)
 	return r1, r2, args.Error(2)
 }
 
@@ -143,13 +143,16 @@ func (m *MockNS1ListZonesFail) ListZones() ([]*dns.Zone, *http.Response, error) 
 }
 
 func TestNS1Records(t *testing.T) {
+	mock := &MockNS1DomainClient{}
 	provider := &NS1Provider{
-		client:        &MockNS1DomainClient{},
+		client:        mock,
 		domainFilter:  endpoint.NewDomainFilter([]string{"foo.com."}),
 		zoneIDFilter:  provider.NewZoneIDFilter([]string{""}),
 		minTTLSeconds: 3600,
 	}
 	ctx := context.Background()
+
+	mock.On("GetRecord", "foo.com", "test.foo.com", "A").Return(&dns.Record{}, &http.Response{}, nil)
 
 	records, err := provider.Records(ctx)
 	require.NoError(t, err)
@@ -217,14 +220,14 @@ func TestNS1BuildRecord(t *testing.T) {
 		domainFilter:  endpoint.NewDomainFilter([]string{"foo.com."}),
 		zoneIDFilter:  provider.NewZoneIDFilter([]string{""}),
 		minTTLSeconds: 300,
-    OwnerID: "testOwner",
+		OwnerID:       "testOwner",
 	}
 
 	record := provider.ns1BuildRecord("foo.com", change)
 	assert.Equal(t, "foo.com", record.Zone)
 	assert.Equal(t, "new.foo.com", record.Domain)
 	assert.Equal(t, 300, record.TTL)
-  assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
+	assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
 
 	changeWithTTL := &ns1Change{
 		Action: ns1Create,
@@ -239,7 +242,7 @@ func TestNS1BuildRecord(t *testing.T) {
 	assert.Equal(t, "foo.com", record.Zone)
 	assert.Equal(t, "new-b.foo.com", record.Domain)
 	assert.Equal(t, 3600, record.TTL)
-  assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
+	assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
 
 	changeWithWeight := &ns1Change{
 		Action: ns1Create,
@@ -247,29 +250,33 @@ func TestNS1BuildRecord(t *testing.T) {
 			DNSName:    "new-c",
 			Targets:    endpoint.Targets{"target"},
 			RecordType: "A",
-      ProviderSpecific: endpoint.ProviderSpecific{{
-        Name: "weight",
-        Value: "80",
-      }},
+			ProviderSpecific: endpoint.ProviderSpecific{{
+				Name:  "weight",
+				Value: "80",
+			}},
 		},
 	}
 
 	record = provider.ns1BuildRecord("foo.com", changeWithWeight)
-  assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
+	assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
 	assert.Equal(t, "80", record.Answers[0].Meta.Weight)
 }
 
 func TestNS1ApplyChanges(t *testing.T) {
 	changes := &plan.Changes{}
+	mock := &MockNS1DomainClient{}
 	provider := &NS1Provider{
-		client: &MockNS1DomainClient{},
+		client: mock,
 	}
 	changes.Create = []*endpoint.Endpoint{
-		{DNSName: "new.foo.com", Targets: endpoint.Targets{"target"}},
-		{DNSName: "new.subdomain.bar.com", Targets: endpoint.Targets{"target"}},
+		{DNSName: "new.foo.com", Targets: endpoint.Targets{"target"}, RecordType: "A"},
+		{DNSName: "new.subdomain.bar.com", Targets: endpoint.Targets{"target"}, RecordType: "A"},
 	}
 	changes.Delete = []*endpoint.Endpoint{{DNSName: "test.foo.com", Targets: endpoint.Targets{"target"}}}
 	changes.UpdateNew = []*endpoint.Endpoint{{DNSName: "test.foo.com", Targets: endpoint.Targets{"target-new"}}}
+
+	mock.On("GetRecord", "foo.com", "new.foo.com", "A").Return(&dns.Record{}, &http.Response{}, nil)
+
 	err := provider.ApplyChanges(context.Background(), changes)
 	require.NoError(t, err)
 
@@ -355,18 +362,17 @@ func TestNewNS1ChangesByZone(t *testing.T) {
 }
 
 func TestOwnerNote(t *testing.T) {
-  ownerId := "cluster1"
-  note := ownerNote(ownerId)
-  assert.Equal(t, "ownerId:cluster1", note)
+	ownerId := "cluster1"
+	note := ownerNote(ownerId)
+	assert.Equal(t, "ownerId:cluster1", note)
 }
 
-
 func TestCheckOwnerNote(t *testing.T) {
-  metaNote := "ownerId:cluster1"
+	metaNote := "ownerId:cluster1"
 
-  check1 := checkOwnerNote("cluster1", metaNote)
-  check2 := checkOwnerNote("cluster2", metaNote)
+	check1 := checkOwnerNote("cluster1", metaNote)
+	check2 := checkOwnerNote("cluster2", metaNote)
 
-  assert.True(t, check1)
-  assert.False(t, check2)
+	assert.True(t, check1)
+	assert.False(t, check2)
 }
