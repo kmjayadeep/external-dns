@@ -330,3 +330,20 @@ func TestNewNS1ChangesByZone(t *testing.T) {
 	assert.Len(t, changes["bar.com"], 1)
 	assert.Len(t, changes["foo.com"], 3)
 }
+
+func TestOwnerNote(t *testing.T) {
+  ownerId := "cluster1"
+  note := ownerNote(ownerId)
+  assert.Equal(t, "ownerId:cluster1", note)
+}
+
+
+func TestCheckOwnerNote(t *testing.T) {
+  metaNote := "ownerId:cluster1"
+
+  check1 := checkOwnerNote("cluster1", metaNote)
+  check2 := checkOwnerNote("cluster2", metaNote)
+
+  assert.True(t, check1)
+  assert.False(t, check2)
+}
