@@ -39,7 +39,10 @@ type MockNS1DomainClient struct {
 }
 
 func (m *MockNS1DomainClient) GetRecord(zone string, domain string, t string) (*dns.Record, *http.Response, error) {
-	return nil, nil, nil
+  args := m.Called(zone, domain, t)
+  r1 := args.Get(0).(*dns.Record)
+  r2 := args.Get(0).(*http.Response)
+	return r1, r2, args.Error(2)
 }
 
 func (m *MockNS1DomainClient) CreateRecord(r *dns.Record) (*http.Response, error) {
@@ -214,12 +217,14 @@ func TestNS1BuildRecord(t *testing.T) {
 		domainFilter:  endpoint.NewDomainFilter([]string{"foo.com."}),
 		zoneIDFilter:  provider.NewZoneIDFilter([]string{""}),
 		minTTLSeconds: 300,
+    OwnerID: "testOwner",
 	}
 
 	record := provider.ns1BuildRecord("foo.com", change)
 	assert.Equal(t, "foo.com", record.Zone)
 	assert.Equal(t, "new.foo.com", record.Domain)
 	assert.Equal(t, 300, record.TTL)
+  assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
 
 	changeWithTTL := &ns1Change{
 		Action: ns1Create,
@@ -234,6 +239,24 @@ func TestNS1BuildRecord(t *testing.T) {
 	assert.Equal(t, "foo.com", record.Zone)
 	assert.Equal(t, "new-b.foo.com", record.Domain)
 	assert.Equal(t, 3600, record.TTL)
+  assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
+
+	changeWithWeight := &ns1Change{
+		Action: ns1Create,
+		Endpoint: &endpoint.Endpoint{
+			DNSName:    "new-c",
+			Targets:    endpoint.Targets{"target"},
+			RecordType: "A",
+      ProviderSpecific: endpoint.ProviderSpecific{{
+        Name: "weight",
+        Value: "80",
+      }},
+		},
+	}
+
+	record = provider.ns1BuildRecord("foo.com", changeWithWeight)
+  assert.Equal(t, "ownerId:testOwner", record.Answers[0].Meta.Note)
+	assert.Equal(t, "80", record.Answers[0].Meta.Weight)
 }
 
 func TestNS1ApplyChanges(t *testing.T) {
