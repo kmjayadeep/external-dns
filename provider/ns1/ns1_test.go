@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	api "gopkg.in/ns1/ns1-go.v2/rest"
+	"gopkg.in/ns1/ns1-go.v2/rest/model/data"
 	"gopkg.in/ns1/ns1-go.v2/rest/model/dns"
 
 	"sigs.k8s.io/external-dns/endpoint"
@@ -149,14 +150,35 @@ func TestNS1Records(t *testing.T) {
 		domainFilter:  endpoint.NewDomainFilter([]string{"foo.com."}),
 		zoneIDFilter:  provider.NewZoneIDFilter([]string{""}),
 		minTTLSeconds: 3600,
+		OwnerID:       "testOwner",
 	}
 	ctx := context.Background()
 
-	mock.On("GetRecord", "foo.com", "test.foo.com", "A").Return(&dns.Record{}, &http.Response{}, nil)
+	mock.On("GetRecord", "foo.com", "test.foo.com", "A").Return(&dns.Record{
+		Answers: []*dns.Answer{{
+			Meta: &data.Meta{
+				Note: "ownerId:testOwner",
+			},
+		}},
+	}, &http.Response{}, nil)
 
 	records, err := provider.Records(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(records))
+
+	// make sure it only returns owned anwswers
+	mock2 := &MockNS1DomainClient{}
+	provider.client = mock2
+	mock2.On("GetRecord", "foo.com", "test.foo.com", "A").Return(&dns.Record{
+		Answers: []*dns.Answer{{
+			Meta: &data.Meta{
+				Note: "ownerId:testOwner2",
+			},
+		}},
+	}, &http.Response{}, nil)
+	records, err = provider.Records(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(records))
 
 	provider.client = &MockNS1GetZoneFail{}
 	_, err = provider.Records(ctx)
@@ -272,10 +294,12 @@ func TestNS1ApplyChanges(t *testing.T) {
 		{DNSName: "new.foo.com", Targets: endpoint.Targets{"target"}, RecordType: "A"},
 		{DNSName: "new.subdomain.bar.com", Targets: endpoint.Targets{"target"}, RecordType: "A"},
 	}
-	changes.Delete = []*endpoint.Endpoint{{DNSName: "test.foo.com", Targets: endpoint.Targets{"target"}}}
-	changes.UpdateNew = []*endpoint.Endpoint{{DNSName: "test.foo.com", Targets: endpoint.Targets{"target-new"}}}
+	changes.Delete = []*endpoint.Endpoint{{DNSName: "test.foo.com", Targets: endpoint.Targets{"target"}, RecordType: "A"}}
+	changes.UpdateNew = []*endpoint.Endpoint{{DNSName: "test.foo.com", Targets: endpoint.Targets{"target-new"}, RecordType: "A"}}
 
 	mock.On("GetRecord", "foo.com", "new.foo.com", "A").Return(&dns.Record{}, &http.Response{}, nil)
+	mock.On("GetRecord", "bar.com", "new.subdomain.bar.com", "A").Return(&dns.Record{}, &http.Response{}, nil)
+	mock.On("GetRecord", "foo.com", "test.foo.com", "A").Return(&dns.Record{}, &http.Response{}, nil)
 
 	err := provider.ApplyChanges(context.Background(), changes)
 	require.NoError(t, err)
