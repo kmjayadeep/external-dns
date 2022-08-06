@@ -403,6 +403,7 @@ func TestCheckOwnerNote(t *testing.T) {
 
 func TestReconcileRecordChanges(t *testing.T) {
 	table := []struct {
+		message        string
 		record         *dns.Record
 		action         string
 		ns1Record      *dns.Record
@@ -410,6 +411,7 @@ func TestReconcileRecordChanges(t *testing.T) {
 		expectedRecord *dns.Record
 		expectedAction string
 	}{{
+		message: "ns1Create with ErrRecordMissing from ns1 should trigger ns1Create",
 		record: &dns.Record{
 			Zone:   "zone1",
 			Domain: "domain1",
@@ -421,13 +423,8 @@ func TestReconcileRecordChanges(t *testing.T) {
 				},
 			}},
 		},
-		ns1Record: &dns.Record{
-			Zone:    "zone1",
-			Domain:  "domain1",
-			Type:    "A",
-			Answers: []*dns.Answer{},
-		},
-		action: ns1Create,
+		ns1Error: api.ErrRecordMissing,
+		action:   ns1Create,
 		expectedRecord: &dns.Record{
 			Zone:   "zone1",
 			Domain: "domain1",
@@ -439,8 +436,9 @@ func TestReconcileRecordChanges(t *testing.T) {
 				},
 			}},
 		},
-		expectedAction: ns1Update,
+		expectedAction: ns1Create,
 	}, {
+		message: "ns1Create with existing records from ns1 should trigger ns1Update by adding new targets",
 		record: &dns.Record{
 			Zone:   "zone1",
 			Domain: "domain1",
@@ -485,6 +483,84 @@ func TestReconcileRecordChanges(t *testing.T) {
 		},
 		expectedAction: ns1Update,
 	}, {
+		message: "ns1Create with empty record from ns1 should trigger ns1Update by adding new targets",
+		record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		ns1Record: &dns.Record{
+			Zone:    "zone1",
+			Domain:  "domain1",
+			Type:    "A",
+			Answers: []*dns.Answer{},
+		},
+		action: ns1Create,
+		expectedRecord: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		expectedAction: ns1Update,
+	}, {
+		message: "ns1Update with non-owned targets in ns1 should trigger ns1Update by adding new targets",
+		record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		ns1Record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a2",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster2",
+				},
+			}},
+		},
+		action: ns1Create,
+		expectedRecord: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{
+				{
+					ID: "a1",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster1",
+					},
+				},
+				{
+					ID: "a2",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster2",
+					},
+				},
+			},
+		},
+		expectedAction: ns1Update,
+	}, {
+		message: "ns1Update with additional non-owned targets in ns1 should trigger ns1Update by adjusting only owned targets",
 		record: &dns.Record{
 			Zone:   "zone1",
 			Domain: "domain1",
@@ -537,20 +613,22 @@ func TestReconcileRecordChanges(t *testing.T) {
 	}}
 
 	for _, tt := range table {
-		mock := &MockNS1DomainClient{}
-		provider := &NS1Provider{
-			client:  mock,
-			OwnerID: "cluster1",
-		}
-		mock.On("GetRecord", tt.record.Zone, tt.record.Domain, tt.record.Type).Return(
-			tt.ns1Record,
-			&http.Response{},
-			nil,
-		)
+		t.Run(tt.message, func(t *testing.T) {
+			mock := &MockNS1DomainClient{}
+			provider := &NS1Provider{
+				client:  mock,
+				OwnerID: "cluster1",
+			}
+			mock.On("GetRecord", tt.record.Zone, tt.record.Domain, tt.record.Type).Return(
+				tt.ns1Record,
+				&http.Response{},
+				tt.ns1Error,
+			)
 
-		record, action := provider.reconcileRecordChanges(tt.record, tt.action)
-		assert.NotNil(t, record)
-		assert.Equal(t, action, tt.expectedAction)
-		assert.Equal(t, record.Answers, tt.expectedRecord.Answers)
+			record, action := provider.reconcileRecordChanges(tt.record, tt.action)
+			assert.NotNil(t, record)
+			assert.Equal(t, action, tt.expectedAction)
+			assert.Equal(t, record.Answers, tt.expectedRecord.Answers)
+		})
 	}
 }
