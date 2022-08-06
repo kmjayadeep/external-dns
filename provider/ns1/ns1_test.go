@@ -610,6 +610,92 @@ func TestReconcileRecordChanges(t *testing.T) {
 			},
 		},
 		expectedAction: ns1Update,
+	}, {
+		message: "ns1Delete with only owned targets in ns1 should trigger ns1Delete",
+		record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		ns1Record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		action: ns1Delete,
+		expectedRecord: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{
+				{
+					ID: "a1",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster1",
+					},
+				},
+			},
+		},
+		expectedAction: ns1Delete,
+	}, {
+		message: "ns1Delete with non-owned targets in ns1 should trigger ns1Update by removing owned targets",
+		record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		ns1Record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{
+				{
+					ID: "a1",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster1",
+					},
+				},
+				{
+					ID: "a2",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster2",
+					},
+				},
+			},
+		},
+		action: ns1Delete,
+		expectedRecord: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{
+				{
+					ID: "a2",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster2",
+					},
+				},
+			},
+		},
+		expectedAction: ns1Delete,
 	}}
 
 	for _, tt := range table {
