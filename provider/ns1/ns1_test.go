@@ -400,3 +400,157 @@ func TestCheckOwnerNote(t *testing.T) {
 	assert.True(t, check1)
 	assert.False(t, check2)
 }
+
+func TestReconcileRecordChanges(t *testing.T) {
+	table := []struct {
+		record         *dns.Record
+		action         string
+		ns1Record      *dns.Record
+		ns1Error       error
+		expectedRecord *dns.Record
+		expectedAction string
+	}{{
+		record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		ns1Record: &dns.Record{
+			Zone:    "zone1",
+			Domain:  "domain1",
+			Type:    "A",
+			Answers: []*dns.Answer{},
+		},
+		action: ns1Create,
+		expectedRecord: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		expectedAction: ns1Update,
+	}, {
+		record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		ns1Record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a2",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster2",
+				},
+			}},
+		},
+		action: ns1Create,
+		expectedRecord: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{
+				{
+					ID: "a1",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster1",
+					},
+				},
+				{
+					ID: "a2",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster2",
+					},
+				},
+			},
+		},
+		expectedAction: ns1Update,
+	}, {
+		record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{{
+				ID: "a1",
+				Meta: &data.Meta{
+					Note: "ownerId:cluster1",
+				},
+			}},
+		},
+		ns1Record: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{
+				{
+					ID: "a2",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster1",
+					},
+				}, {
+					ID: "a3",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster2",
+					},
+				}},
+		},
+		action: ns1Update,
+		expectedRecord: &dns.Record{
+			Zone:   "zone1",
+			Domain: "domain1",
+			Type:   "A",
+			Answers: []*dns.Answer{
+				{
+					ID: "a1",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster1",
+					},
+				},
+				{
+					ID: "a3",
+					Meta: &data.Meta{
+						Note: "ownerId:cluster2",
+					},
+				},
+			},
+		},
+		expectedAction: ns1Update,
+	}}
+
+	for _, tt := range table {
+		mock := &MockNS1DomainClient{}
+		provider := &NS1Provider{
+			client:  mock,
+			OwnerID: "cluster1",
+		}
+		mock.On("GetRecord", tt.record.Zone, tt.record.Domain, tt.record.Type).Return(
+			tt.ns1Record,
+			&http.Response{},
+			nil,
+		)
+
+		record, action := provider.reconcileRecordChanges(tt.record, tt.action)
+		assert.NotNil(t, record)
+		assert.Equal(t, action, tt.expectedAction)
+		assert.Equal(t, record.Answers, tt.expectedRecord.Answers)
+	}
+}

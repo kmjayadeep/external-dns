@@ -315,7 +315,7 @@ func (p *NS1Provider) ns1SubmitChanges(changes []*ns1Change) error {
 
 			log.WithFields(logFields).Info("record changes as per external-dns registry")
 
-			// external-dns triggers an action base on it's 'view' of the answers
+			// external-dns triggers an action based on it's 'view' of the answers
 			// but in reality, there might be other answers which are owned by different external-dns instances
 			// So we need to update the records properly while making sure that we are not changing records owned by
 			// other instances
