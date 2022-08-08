@@ -249,7 +249,9 @@ func (p *NS1Provider) reconcileRecordChanges(record *dns.Record, action string) 
 
 	// Add the filters back to the posting object
 	// method ns1BuildRecord creats a new record object, which discards the original filters available at ns1
-	record.Filters = r.Filters
+	if r != nil {
+		record.Filters = r.Filters
+	}
 
 	switch action {
 	case ns1Create:
