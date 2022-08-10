@@ -181,11 +181,15 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 				}
 
 				var targets []string
+				var weight string
 
 				// Discard the answers which are not owned by this OwnerID
 				for i, e := range r.Answers {
 					if checkOwnerNote(p.OwnerID, e.Meta.Note) {
 						targets = append(targets, record.ShortAns[i])
+						if e.Meta.Weight != nil {
+							weight = fmt.Sprintf("%v", e.Meta.Weight)
+						}
 					}
 				}
 
@@ -203,9 +207,8 @@ func (p *NS1Provider) Records(ctx context.Context) ([]*endpoint.Endpoint, error)
 				)
 
 				// If weight meta is available, add it to endpoint
-				if len(r.Answers) > 0 && r.Answers[0].Meta != nil && r.Answers[0].Meta.Weight != nil {
-					w := fmt.Sprintf("%v", r.Answers[0].Meta.Weight)
-					ep.WithProviderSpecific("weight", w)
+				if weight != "" {
+					ep = ep.WithProviderSpecific("weight", weight)
 				}
 
 				endpoints = append(endpoints, ep)
